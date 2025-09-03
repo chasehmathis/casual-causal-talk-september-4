@@ -1,0 +1,24 @@
+Notes:
+
+How can you simulate from a specified causal model?
+
+Can simulate X ~ P(X); propensity score Z ~ P(Z | X); 
+then potential outcome Y ~ P(Y | X, Z).
+
+it's hard to reason from here what the marginal causal distribution
+p(Y_z) is the distribution of Y given treatment is z.
+
+Even if you're interested in the conditional CATE, you still may want to marginalize
+over things.
+
+When you get to longitudinal outcomes its even more difficult to simulate from
+these models (references)
+
+Can you decompose p(Y, X, Z) into p*(Y_z), p(X, Z), and a dependence beteween
+Z and Y (potentially conditional on X).
+
+Yes with causl and survivl
+
+
+# use ipw not outcome regression because its the potential outcome / intervention
+# distribution we assume is linear. Don't assume | L, A0 Y is linear.
