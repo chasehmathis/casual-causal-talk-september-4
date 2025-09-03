@@ -11,7 +11,7 @@
 
 <meta name="author" content="Your name" />
 
-<meta name="date" content="2025-08-29" />
+<meta name="date" content="2025-09-03" />
 
 <title>Demo Simulating Data Casual Causal</title>
 
@@ -352,13 +352,15 @@ display: none;
 
 <h1 class="title toc-ignore">Demo Simulating Data Casual Causal</h1>
 <h4 class="author">Your name</h4>
-<h4 class="date">2025-08-29</h4>
+<h4 class="date">2025-09-03</h4>
 
 </div>
 
 
-<div id="walk-through" class="section level3">
-<h3>Walk Through</h3>
+<pre class="r"><code>knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+knitr::opts_chunk$set(eval = FALSE)</code></pre>
+<div id="walk-through" class="section level2">
+<h2>Walk Through</h2>
 <p><span class="math display">\[\begin{align}
 X &amp;\sim N(0,1)\\
 Z \mid X &amp;\sim \rm{Bernoulli}(\operatorname{expit}(X))\\
@@ -366,12 +368,10 @@ Y_{Z} &amp;\sim N(Z, 1)
 \end{align}\]</span></p>
 <p>and we will have a Gaussian Copula between <span class="math inline">\(X\)</span> and <span class="math inline">\(Y\)</span> with parameter <span class="math inline">\(\rho = 2\operatorname{expit}(0.4) - 1\)</span></p>
 <pre class="r"><code># need gcc
-remotes::install_github(&quot;rje42/causl&quot;)</code></pre>
-<pre><code>## Skipping install of &#39;causl&#39; from a github remote, the SHA1 (30672dea) has not changed since last install.
-##   Use `force = TRUE` to force installation</code></pre>
-<pre class="r"><code>library(causl)</code></pre>
-<pre><code>## Loading required package: rje</code></pre>
-<pre><code>## Loading required package: VineCopula</code></pre>
+remotes::install_github(&quot;chasehmathis/causl&quot;)
+remotes::install_github(&quot;chasehmathis/survivl&quot;)
+library(causl)
+library(survivl)</code></pre>
 <pre class="r"><code># define the &quot;structure&quot; of the causal model
 forms &lt;- 
   list(
@@ -380,7 +380,7 @@ forms &lt;-
     # (Marginal Causal),
     # Copula
   )
-
+print(causl::family_vals)
 # translate Normal, Bernoulli, etc.
 fams &lt;- 
   list(
@@ -402,14 +402,314 @@ pars &lt;-
 # make a causal model object
 cm &lt;- causl_model(formulas = forms, family = fams, pars = pars)
 
+# curious about the link functions?
+print(cm$link)
+
 # simualte from this model
-dat &lt;- rfrugalParam(n = 1e3, )</code></pre>
+dat &lt;- rfrugal(n = 1e3, causl_model = cm)</code></pre>
+<pre class="r"><code>ps &lt;- fitted(glm(Z ~ X, family = binomial(), data = dat))
+wts &lt;- dat$Z/ps + (1-dat$Z)/(1-ps)
+library(survey) # recommend this for estimated weight s.e.
+
+design &lt;- svydesign(~1, weights = wts, data = dat)
+mod &lt;- svyglm(Y ~ Z, design = design)
+
+summary(mod)</code></pre>
 </div>
-<div id="estimator-example" class="section level3">
-<h3>Estimator Example</h3>
+<div id="plasmode-example" class="section level2">
+<h2>Plasmode Example</h2>
+<p>Plasmode means to simulate on top of existing data. Suppose you want
+to run an experiment on students in the Berkeley statistics department
+assigning them to either come into Evans hall or stay home to work. An
+interesting outcome could be time till graduation (we’ll return to
+this), but an easier one is their dat grade average at the end of the
+year (continuous, normal assumption). For returning students we have
+their grades from last year, otherwise we have 1st year students grades
+from their last school. We have this information it is fixed and not
+random. Say, we want to assign treatment conditional on that.</p>
+<pre class="r"><code># assume we have last years grades of n = 100 students, call it X
+n &lt;- 100
+X &lt;- grade_average &lt;- pmin(rnorm(n, 91, 3), 100)
+# mean center
+X &lt;- X - mean(X)
+dat0 &lt;- data.frame(X)</code></pre>
+<pre class="r"><code># define the &quot;structure&quot; of the causal model
+forms &lt;- 
+  list(
+    # (covariates),
+    # (Treatments | covariates),
+    # (Marginal Causal),
+    # Copula
+  )
+print(causl::family_vals)
+# translate Normal, Bernoulli, etc.
+fams &lt;- 
+  list(
+    # (covariates)
+    # (Treatments | covariates),
+    # (Marginal Causal),
+    # copula
+  )
+
+# The paramters for this model
+pars &lt;- 
+  list(
+    # (covariates)
+    # (Treatments | covariates),
+    # (Marginal Causal),
+    # copula
+  )
+
+# make a causal model object
+cm &lt;- causl_model(formulas = forms, family = fams, pars = pars)
+
+# curious about the link functions?
+print(cm$link)
+
+# simualte from this model
+dat &lt;- rfrugal(n = 1e3, causl_model = cm)</code></pre>
 </div>
-<div id="power-calculation-example" class="section level3">
-<h3>Power Calculation Example</h3>
+<div id="using-plasmode-for-treatment-switching" class="section level2">
+<h2>Using Plasmode for Treatment Switching</h2>
+<p>In this vignette we consider <em>marginal structural models</em> for
+<em>non</em>-time-to-event data. Begin by loading the library.</p>
+<pre class="r"><code>library(survivl)
+options(digits=4)</code></pre>
+<p>We follow the situation as researched in Bodnar et al. (2004), which
+examines the causal effect of iron supplement use during pregancy on the
+odds of anemia at delivery. Therefore, we have a longitudinal data
+structure with one, non survival outcome. We have time varying
+covariates as treatment is not fixed and hemoglobin levels dictate
+further treatment assignments.</p>
+<p>The baseline covariates are <span class="math inline">\(Z\)</span>
+which is the set {B = pre-pregnancy obesity, C = age}. <span class="math inline">\(L\)</span> is our single time varying covariate:
+Hemoglobin levels. The outcome <span class="math inline">\(Y\)</span> is
+a binary {0,1} indicating anemia at delivery.</p>
+<p>We set at <span class="math inline">\(t = 0\)</span>, <span class="math inline">\(B \sim \rm{Bernoulli}(0.1), C \sim U(25, 35), L_0
+\sim N(11−0.05 B−0.02 C, 0.5)\)</span> and <span class="math inline">\(A_0 \sim \rm{Bernoulli}(0.5)\)</span>.</p>
+<p>For <span class="math inline">\(k &gt; 0\)</span>, we have <span class="math inline">\(L_k \sim N(L_{k−1} + 0.5 A_{k−1}, 0.1)\)</span>,
+<span class="math inline">\(A_0 = A_1 = A_2\)</span> and <span class="math inline">\(A_k \sim \rm{Bernoulli}(\rm{expit}(10 - L_k +
+0.1A_{k-1})\)</span> for <span class="math inline">\(k =
+3,4\)</span>.</p>
+<p>Our structural causal model is</p>
+<p><span class="math display">\[\PM(Y(\bar{A_k}) = 1 \mid  B, C) =
+\rm{expit}(-2 + 0.1B + 0.02C - \beta \sum_{j = 1}^{4}A_j))\]</span></p>
+<div id="simulate-t-0-1-2" class="section level3">
+<h3>Simulate t = 0, 1, 2</h3>
+<p>Here, we set up the number of samples and our quantiles data frame.
+Note that we assume <span class="math inline">\(A_k\)</span> is the same
+for <span class="math inline">\(k = 0,1,2\)</span>, so the quantiles for
+those variables are set to be the same.</p>
+<pre class="r"><code># t = 0, n = 10,000
+n &lt;- 1e4
+qtls &lt;- data.frame(matrix(runif(n*4), ncol = 4))
+colnames(qtls) &lt;- c(&quot;B&quot;, &quot;C&quot;, &quot;L_0&quot;, &quot;A_0&quot;) # this is different than previous. 
+# We have access to quantiles/ranks
+qtls &lt;- cbind(qtls, qtls[[&quot;A_0&quot;]], qtls[[&quot;A_0&quot;]])
+colnames(qtls) &lt;- c(&quot;B&quot;, &quot;C&quot;, &quot;L_0&quot;, &quot;A_0&quot;, &quot;A_1&quot;, &quot;A_2&quot;)</code></pre>
+<p>Now we use the inverse cdf to get random samples from our quantiles.
+We collect them in <code>dat0</code> variable.</p>
+<pre class="r"><code>B &lt;- qbinom(qtls[[&quot;B&quot;]], 1, 0.1);  C &lt;- qunif(qtls[[&quot;C&quot;]], 25, 35)
+L_0 &lt;- qnorm(qtls[[&quot;L_0&quot;]], 11 - 0.05 * B - 0.02 * C, 0.5)
+A_0 &lt;- A_1 &lt;- A_2 &lt;- qbinom(qtls[[&quot;A_0&quot;]], 1, 0.5)
+
+dat0 &lt;- cbind(B, C, L_0, A_0, A_1, A_2)</code></pre>
+<p>This code chunk sets up our <code>surv_model</code> object by
+defining the structur and parameters we imposed above.</p>
+<pre class="r"><code>forms &lt;- list(list(B ~ 1, C ~ 1),
+              L ~ B + C,
+              A ~ L_l0 + A_l1,
+              Y ~ B + C + I(A_0 + A_1 + A_2 + A_3 + A_4),
+              L ~ 1)
+fams &lt;- list(list(5, 4),
+             1,
+             5,
+             5,
+             2)
+causal_parameters &lt;- c(-2, 0.1, 0.02, -0.5)
+pars &lt;- list(
+  B = list(beta = 0.1), 
+  C = list(beta = 1),
+  L = list(beta = c(11, -0.05, -0.02), phi = 0.5),
+  A = list(beta = c(10, -1, 0.1)),
+  Y = list(beta = causal_parameters),
+  cop = list(Y = list(L = list(beta = 0.4, par2 = 5))))
+
+surv_model &lt;- survivl_model(formulas = forms, family = fams,
+                            pars = pars, T = 5, dat = dat0, qtls = qtls)</code></pre>
+<p>We call <code>rmsm</code> to simulate from this model.</p>
+<pre class="r"><code>dat &lt;- rmsm(n, surv_model)</code></pre>
+<p>Now, we choose to use the IPW estimator to recover our estimates we
+specified.</p>
+<pre class="r"><code>glm_A0 &lt;- glm(A_0 ~ L_0, family = binomial(), data = dat)
+glm_A3 &lt;- glm(A_3 ~ L_0 + L_1 + L_2 + A_0 , family = binomial(), data = dat)
+glm_A4 &lt;- glm(A_4 ~ L_0 + L_1 + L_2 + L_3 + A_0  + A_3, family = binomial(), data = dat)
+
+glm_A0_num &lt;- glm(A_0 ~ 1, family = binomial(), data = dat)
+glm_A3_num &lt;- glm(A_3 ~ A_0, family = binomial(), data = dat)
+glm_A4_num &lt;- glm(A_4 ~ A_0 + A_3, family = binomial(), data = dat)
+
+ps_A0_num &lt;- predict(glm_A0_num, type = &quot;response&quot;)
+ps_A3_num &lt;- predict(glm_A3_num, type = &quot;response&quot;)
+ps_A4_num &lt;- predict(glm_A4_num, type = &quot;response&quot;)
+
+ps_A0 &lt;- predict(glm_A0, type = &quot;response&quot;)
+ps_A3 &lt;- predict(glm_A3, type = &quot;response&quot;)
+ps_A4 &lt;- predict(glm_A4, type = &quot;response&quot;)
+
+# Compute weights depending on actual values of X_t
+w0 &lt;- ifelse(dat$A_0 == 1, ps_A0, 1 - ps_A0)
+w1 &lt;- w2 &lt;- rep(1,n) #  always 1 because A_1 and A_2 are deterministic conditional on A_0
+w3 &lt;- ifelse(dat$A_3 == 1, ps_A3, 1 - ps_A3)
+w4 &lt;- ifelse(dat$A_4 == 1, ps_A4, 1 - ps_A4)
+w0_num &lt;- ifelse(dat$A_0 == 1, ps_A0_num, 1 - ps_A0_num)
+w3_num &lt;- ifelse(dat$A_3 == 1, ps_A3_num, 1 - ps_A3_num)
+w4_num &lt;- ifelse(dat$A_4 == 1, ps_A4_num, 1 - ps_A4_num)
+
+dat$iptw_weights &lt;- w0_num * w3_num * w4_num / (w0 * w1 * w2 * w3 * w4 )
+
+glm_Y &lt;- glm(Y ~ B + C + I(A_0 + A_1 + A_2 + A_3 + A_4), 
+             data = dat, weights = iptw_weights, family = binomial())</code></pre>
+<pre class="r"><code>sumY &lt;- summary(glm_Y)
+abs(sumY$coefficients[,1] - causal_parameters)/sumY$coefficients[,2]
+# should be less than 2 s.e. 95% of the time</code></pre>
+</div>
+</div>
+<div id="survival-outcome-example" class="section level2">
+<h2>Survival Outcome Example</h2>
+<p>In the previous example, we had one <span class="math inline">\(Y\)</span> at the end of the study. To code it you
+use the survivl package, even though it is not a survival event. Our
+method does allow for survival events (also known as time-to-event
+outcomes). Examples include time until graduation or time until death.
+Data is hard and includes many caveats including censoring.</p>
+<p>Then we define our formulas and family variables. We will have one
+baseline variable, and a single time-varying covariate, treatment and
+outcome. More specifically, let: <span class="math display">\[\begin{align*}
+W &amp;\sim \operatorname{Gamma}(1/2, \, 2)  \\
+X_t \mid \overline{X}_{t-1}, \overline{Z}_{t-1} &amp;\sim N(0.7 X_{t-1}
++ 0.2 Z_{t-1}, \, 1)\\
+Z_t \mid \overline{X}_{t}, \overline{Z}_{t-1} &amp;\sim
+\operatorname{Bernoulli}(\operatorname{expit}(0.5 Z_{t-1} + 0.25 X_t))\\
+P(Y_t(\overline{Z}_{t}) = 1 \mid  W) &amp;= \exp\{ - 0.2 Z_t + W/10\},
+\end{align*}\]</span> and assume that there is a Gaussian pair-copula
+linking <span class="math inline">\(Y_t\)</span> with <span class="math inline">\(X_{t-1},X_t\)</span>, which also depends upon
+<span class="math inline">\(W\)</span>.</p>
+<pre class="r"><code>forms &lt;- list(W ~ 1,
+              X ~ X_l1 + Z_l1,
+              Z ~ Z_l1 + X_l0,
+              Y ~ W + Z_l0,
+              list(Y = list(X~1)))
+fams &lt;- list(3, 1, 5, 3, c(1))
+pars &lt;- list(W = list(beta=0, phi=1/2),
+             X = list(beta=c(0,0.7,0.2), phi=1),
+             Z = list(beta=c(-0.5,0.25,0.5)),
+             Y = list(beta=c(1,-1/10,1/5), phi=1),
+             cop = list(Y=list(X=list(beta = 0.5))))
+
+link &lt;- list(&quot;log&quot;, &quot;identity&quot;, &quot;logit&quot;, &quot;log&quot;)
+surv_model &lt;- survivl_model(T = 8, formulas = forms, family = fams, pars = pars, link=link)</code></pre>
+<pre class="r"><code>n &lt;- 1e4
+set.seed(124)
+dat &lt;- rmsm(n, surv_model)
+datl &lt;- surv_to_long(dat, lag=1)
+
+library(ipw)
+temp &lt;- ipwtm(
+  exposure = Z,
+  family = &quot;binomial&quot;,
+  link = &quot;logit&quot;,
+  numerator = ~W,
+  denominator = ~ W + X,
+  id = id,
+  type = &quot;all&quot;,
+  timevar = t,
+  data = datl,
+)
+datl$wt &lt;- temp$ipw.weights
+# can do a cox model or survreg does parametric
+mod_correct &lt;- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = wt, data = datl,
+                     timefix = FALSE) 
+mod_naive &lt;- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = rep(1, nrow(datl)), data = datl,
+                   timefix = FALSE)</code></pre>
+</div>
+<div id="power-calculation-example" class="section level2">
+<h2>Power Calculation Example</h2>
+<p>All of these parts of the model will stay the same when we do our
+power calculations.</p>
+<pre class="r"><code>formulas &lt;- list(list(C ~ 1,
+                      X ~ C),
+         Z ~ X + C,
+         Y ~ Z + C,
+         list(Y = list(X ~1)))
+family &lt;- list(c(5,1),5,1,1) # binomial, normal, binomial, normal, normal
+link &lt;- list(list(&quot;logit&quot;, &quot;identity&quot;), &quot;logit&quot;, &quot;identity&quot;)
+pars &lt;- list(C = list(beta=0),
+             X = list(beta = c(-1/2,0.25), phi=0.5),
+             Z = list(beta = c(0,1/2,1/10)),
+             cop = list(Y = list(Z = list(beta=0.8472979), 
+                                 C = list(beta = 0)))) </code></pre>
+<p>However, our causal effect will change as we plot our power
+curve.</p>
+<p>Create a function to estimate power for a specific causal effect and
+alpha = 0.05</p>
+<pre class="r"><code>monte_carlo_sims &lt;- 1e3
+estimate_power &lt;- function(causal_effect, n = 1e3, alpha = 0.05){
+  pars[[&quot;Y&quot;]] &lt;- list(beta = c(0, causal_effect, 0.2), phi = 1)
+  cm &lt;- causl_model(formulas = formulas, family = family, 
+                    link = link, pars = pars)
+  pvals &lt;- numeric(length = monte_carlo_sims)
+  covered &lt;- numeric(length = monte_carlo_sims)
+  for(i in seq(monte_carlo_sims)){
+    dat &lt;- rfrugal(n, causl_model  = cm)
+    wts &lt;- ipw::ipwpoint(exposure = Z, family = &quot;binomial&quot;, link = &quot;logit&quot;,
+                         numerator = ~C, denominator = ~C +X,
+                         data = dat)$ipw.weights
+    sumMod &lt;- summary(lm(Y ~ X + C, weights = wts, data = dat))
+    pvals[i] &lt;- sumMod$coefficients[2,4]
+    covered[i] &lt;-  (abs(sumMod$coefficients[2,1] - causal_effect) / sumMod$coefficients[2,2]) &lt; 2
+  }
+  return(list(pvals = pvals, covered = covered, n = n, causal_effect = causal_effect))
+}
+
+causal_effects &lt;- seq(0.05, 0.25, length.out = 10)
+ns &lt;- c(2e2, 4e2, 6e2, 8e2, 1e3)
+grid &lt;- expand.grid(causal_effect = causal_effects, n = ns)</code></pre>
+<pre class="r"><code># takes a long time to run. Change eval=TRUE to run.
+res &lt;- apply(grid, 1, \(x) estimate_power(x[1], x[2]))
+res2 &lt;- lapply(res, \(x) list(pvals = x$pvals, covered = x$covered, 
+                             n = x$n, causal_effect = x$causal_effect))</code></pre>
+<pre class="r"><code># takes a long time to run. Change eval=TRUE to run.
+power &lt;- sapply(res, function(x) mean(x$pvals &lt; 0.05))
+coverage &lt;- sapply(res, function(x) mean(x$covered))
+ns &lt;- sapply(res, function(x) x$n)
+causal_effects &lt;- sapply(res, function(x) x$causal_effect)
+results &lt;- data.frame(
+  causal_effect = causal_effects,
+  power = power,
+  coverage = coverage,
+  ns = factor(ns),
+  causal_effects = causal_effects
+)
+results |&gt; 
+  ggplot(aes(x = causal_effects, y = power, color = ns)) + 
+  geom_line() +
+  geom_point() + 
+  labs(
+    x = &quot;Causal Effect&quot;,
+    y = &quot;Power = 1 - Type II error Rate&quot;,
+    title = &quot;Power by (n) and causal effect&quot;
+  )
+
+results |&gt; 
+  ggplot(aes(x = causal_effect, y = coverage, color = ns)) + 
+    geom_line() +
+  geom_point() + 
+  ylim(c(0.9,1)) + 
+  labs(
+    x = &quot;Causal Effect&quot;,
+    y = &quot;Coverage&quot;,
+    title = &quot;2 Standard Error Coverage by (n) and causal effect&quot;
+  )</code></pre>
 </div>
 
 

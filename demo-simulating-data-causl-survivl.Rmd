@@ -4,8 +4,12 @@ output: html_document
 date: "`r Sys.Date()`"
 author: "Your name"
 ---
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+knitr::opts_chunk$set(eval = FALSE)
+```
 
-### Walk Through
+## Walk Through
 
 \begin{align}
 X &\sim N(0,1)\\
@@ -13,17 +17,17 @@ Z \mid X &\sim \rm{Bernoulli}(\operatorname{expit}(X))\\
 Y_{Z} &\sim N(Z, 1)
 \end{align}
 
-and we will have a Gaussian Copula between $X$ and $Y$ with parameter
-$\rho = 2\operatorname{expit}(0.4) - 1$
+and we will have a Gaussian Copula between $X$ and $Y$ with parameter $\rho = 2\operatorname{expit}(0.4) - 1$
 
 ```{r}
 # need gcc
-remotes::install_github("rje42/causl")
+remotes::install_github("chasehmathis/causl")
+remotes::install_github("chasehmathis/survivl")
 library(causl)
+library(survivl)
 ```
 
-
-```{r setup-1, eval=FALSE}
+```{r setup-1}
 # define the "structure" of the causal model
 forms <- 
   list(
@@ -61,7 +65,7 @@ print(cm$link)
 dat <- rfrugal(n = 1e3, causl_model = cm)
 ```
 
-```{r ipw estimator}
+```{r ipw estimator, eval = FALSE}
 ps <- fitted(glm(Z ~ X, family = binomial(), data = dat))
 wts <- dat$Z/ps + (1-dat$Z)/(1-ps)
 library(survey) # recommend this for estimated weight s.e.
@@ -72,17 +76,9 @@ mod <- svyglm(Y ~ Z, design = design)
 summary(mod)
 ```
 
+## Plasmode Example
 
-
-### Plasmode Example
-Plasmode means to simulate on top of existing data. Suppose you want 
-to run an experiment on students in the Berkeley statistics department assigning
-them to either come into Evans hall or stay home to work. An interesting outcome could
-be time till graduation (we'll return to this), but an easier one is their dat
-grade average at the end of the year (continuous, normal assumption). For returning
-students we have their grades from last year, otherwise we have 1st year students grades
-from their last school. We have this information it is fixed and not random.
-Say, we want to assign treatment conditional on that. 
+Plasmode means to simulate on top of existing data. Suppose you want to run an experiment on students in the Berkeley statistics department assigning them to either come into Evans hall or stay home to work. An interesting outcome could be time till graduation (we'll return to this), but an easier one is their dat grade average at the end of the year (continuous, normal assumption). For returning students we have their grades from last year, otherwise we have 1st year students grades from their last school. We have this information it is fixed and not random. Say, we want to assign treatment conditional on that.
 
 ```{r}
 # assume we have last years grades of n = 100 students, call it X
@@ -133,7 +129,6 @@ dat <- rfrugal(n = 1e3, causl_model = cm)
 
 ## Using Plasmode for Treatment Switching
 
-
 In this vignette we consider *marginal structural models* for *non*-time-to-event data. Begin by loading the library.
 
 ```{r load}
@@ -151,9 +146,9 @@ For $k > 0$, we have $L_k \sim N(L_{k−1} + 0.5 A_{k−1}, 0.1)$, $A_0 = A_1 = 
 
 Our structural causal model is
 
-$$\PM(Y = 1 \mid \rm{do}(\bar{A_k}), B, C) = \rm{expit}(-2 + 0.1B + 0.02C - \beta \sum_{j = 1}^{4}A_j))$$
+$$\PM(Y(\bar{A_k}) = 1 \mid  B, C) = \rm{expit}(-2 + 0.1B + 0.02C - \beta \sum_{j = 1}^{4}A_j))$$
 
-## Simulate t = 0, 1, 2
+### Simulate t = 0, 1, 2
 
 Here, we set up the number of samples and our quantiles data frame. Note that we assume $A_k$ is the same for $k = 0,1,2$, so the quantiles for those variables are set to be the same.
 
@@ -251,9 +246,159 @@ abs(sumY$coefficients[,1] - causal_parameters)/sumY$coefficients[,2]
 # should be less than 2 s.e. 95% of the time
 ```
 
+## Survival Outcome Example
+
+In the previous example, we had one $Y$ at the end of the study. To code it you use the  survivl package, even though it is not a survival event. Our method does allow
+for survival events (also known as time-to-event outcomes). Examples include
+time until graduation or time until death. Data is hard and includes many caveats
+including censoring.
 
 
+Then we define our formulas and family variables. We will have one
+baseline variable, and a single time-varying covariate, treatment and
+outcome. More specifically, let: \begin{align*}
+W &\sim \operatorname{Gamma}(1/2, \, 2)  \\
+X_t \mid \overline{X}_{t-1}, \overline{Z}_{t-1} &\sim N(0.7 X_{t-1} + 0.2 Z_{t-1}, \, 1)\\
+Z_t \mid \overline{X}_{t}, \overline{Z}_{t-1} &\sim \operatorname{Bernoulli}(\operatorname{expit}(0.5 Z_{t-1} + 0.25 X_t))\\ 
+P(Y_t(\overline{Z}_{t}) = 1 \mid  W) &= \exp\{ - 0.2 Z_t + W/10\},
+\end{align*} and assume that there is a Gaussian pair-copula linking
+$Y_t$ with $X_{t-1},X_t$, which also depends upon $W$. 
+
+```{r formulas}
+forms <- list(W ~ 1,
+              X ~ X_l1 + Z_l1,
+              Z ~ Z_l1 + X_l0,
+              Y ~ W + Z_l0,
+              list(Y = list(X~1)))
+fams <- list(3, 1, 5, 3, c(1))
+pars <- list(W = list(beta=0, phi=1/2),
+             X = list(beta=c(0,0.7,0.2), phi=1),
+             Z = list(beta=c(-0.5,0.25,0.5)),
+             Y = list(beta=c(1,-1/10,1/5), phi=1),
+             cop = list(Y=list(X=list(beta = 0.5))))
+
+link <- list("log", "identity", "logit", "log")
+surv_model <- survivl_model(T = 8, formulas = forms, family = fams, pars = pars, link=link)
+```
+
+```{r simulate from the surv_model}
+n <- 1e4
+set.seed(124)
+dat <- rmsm(n, surv_model)
+datl <- surv_to_long(dat, lag=1)
+
+library(ipw)
+temp <- ipwtm(
+  exposure = Z,
+  family = "binomial",
+  link = "logit",
+  numerator = ~W,
+  denominator = ~ W + X,
+  id = id,
+  type = "all",
+  timevar = t,
+  data = datl,
+)
+datl$wt <- temp$ipw.weights
+# can do a cox model or survreg does parametric
+mod_correct <- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = wt, data = datl,
+                     timefix = FALSE) 
+mod_naive <- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = rep(1, nrow(datl)), data = datl,
+                   timefix = FALSE)
+```
 
 
+## Power Calculation Example
 
-### Power Calculation Example
+All of these parts of the model will stay the same when we do our power calculations.
+
+```{r define static model}
+formulas <- list(list(C ~ 1,
+                      X ~ C),
+         Z ~ X + C,
+         Y ~ Z + C,
+         list(Y = list(X ~1)))
+family <- list(c(5,1),5,1,1) # binomial, normal, binomial, normal, normal
+link <- list(list("logit", "identity"), "logit", "identity")
+pars <- list(C = list(beta=0),
+             X = list(beta = c(-1/2,0.25), phi=0.5),
+             Z = list(beta = c(0,1/2,1/10)),
+             cop = list(Y = list(Z = list(beta=0.8472979), 
+                                 C = list(beta = 0)))) 
+```
+
+However, our causal effect will change as we plot our power curve.
+
+Create a function to estimate power for a specific causal effect and alpha = 0.05
+
+```{r}
+monte_carlo_sims <- 1e3
+estimate_power <- function(causal_effect, n = 1e3, alpha = 0.05){
+  pars[["Y"]] <- list(beta = c(0, causal_effect, 0.2), phi = 1)
+  cm <- causl_model(formulas = formulas, family = family, 
+                    link = link, pars = pars)
+  pvals <- numeric(length = monte_carlo_sims)
+  covered <- numeric(length = monte_carlo_sims)
+  for(i in seq(monte_carlo_sims)){
+    dat <- rfrugal(n, causl_model  = cm)
+    wts <- ipw::ipwpoint(exposure = Z, family = "binomial", link = "logit",
+                         numerator = ~C, denominator = ~C +X,
+                         data = dat)$ipw.weights
+    sumMod <- summary(lm(Y ~ X + C, weights = wts, data = dat))
+    pvals[i] <- sumMod$coefficients[2,4]
+    covered[i] <-  (abs(sumMod$coefficients[2,1] - causal_effect) / sumMod$coefficients[2,2]) < 2
+  }
+  return(list(pvals = pvals, covered = covered, n = n, causal_effect = causal_effect))
+}
+
+causal_effects <- seq(0.05, 0.25, length.out = 10)
+ns <- c(2e2, 4e2, 6e2, 8e2, 1e3)
+grid <- expand.grid(causal_effect = causal_effects, n = ns)
+
+
+```
+
+```{r, eval=FALSE}
+# takes a long time to run. Change eval=TRUE to run.
+res <- apply(grid, 1, \(x) estimate_power(x[1], x[2]))
+res2 <- lapply(res, \(x) list(pvals = x$pvals, covered = x$covered, 
+                             n = x$n, causal_effect = x$causal_effect))
+
+
+```
+
+```{r, eval=FALSE}
+# takes a long time to run. Change eval=TRUE to run.
+power <- sapply(res, function(x) mean(x$pvals < 0.05))
+coverage <- sapply(res, function(x) mean(x$covered))
+ns <- sapply(res, function(x) x$n)
+causal_effects <- sapply(res, function(x) x$causal_effect)
+results <- data.frame(
+  causal_effect = causal_effects,
+  power = power,
+  coverage = coverage,
+  ns = factor(ns),
+  causal_effects = causal_effects
+)
+results |> 
+  ggplot(aes(x = causal_effects, y = power, color = ns)) + 
+  geom_line() +
+  geom_point() + 
+  labs(
+    x = "Causal Effect",
+    y = "Power = 1 - Type II error Rate",
+    title = "Power by (n) and causal effect"
+  )
+
+results |> 
+  ggplot(aes(x = causal_effect, y = coverage, color = ns)) + 
+    geom_line() +
+  geom_point() + 
+  ylim(c(0.9,1)) + 
+  labs(
+    x = "Causal Effect",
+    y = "Coverage",
+    title = "2 Standard Error Coverage by (n) and causal effect"
+  )
+  
+```
