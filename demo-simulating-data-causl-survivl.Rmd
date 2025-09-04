@@ -131,11 +131,6 @@ dat <- rfrugal(n = 1e3, causl_model = cm)
 
 In this vignette we consider *marginal structural models* for *non*-time-to-event data. Begin by loading the library.
 
-```{r load}
-library(survivl)
-options(digits=4)
-```
-
 We follow the situation as researched in Bodnar et al. (2004), which examines the causal effect of iron supplement use during pregancy on the odds of anemia at delivery. Therefore, we have a longitudinal data structure with one, non survival outcome. We have time varying covariates as treatment is not fixed and hemoglobin levels dictate further treatment assignments.
 
 The baseline covariates are $Z$ which is the set {B = pre-pregnancy obesity, C = age}. $L$ is our single time varying covariate: Hemoglobin levels. The outcome $Y$ is a binary {0,1} indicating anemia at delivery.
@@ -269,30 +264,30 @@ forms <- list(W ~ 1,
               X ~ X_l1 + Z_l1,
               Z ~ Z_l1 + X_l0,
               Y ~ W + Z_l0,
-              list(Y = list(X~1)))
+              list(Y = list(X~W)))
 fams <- list(3, 1, 5, 3, c(1))
 pars <- list(W = list(beta=0, phi=1/2),
              X = list(beta=c(0,0.7,0.2), phi=1),
              Z = list(beta=c(-0.5,0.25,0.5)),
              Y = list(beta=c(1,-1/10,1/5), phi=1),
-             cop = list(Y=list(X=list(beta = 0.5))))
+             cop = list(Y=list(X=list(beta = c(0,0.5)))))
 
 link <- list("log", "identity", "logit", "log")
 surv_model <- survivl_model(T = 8, formulas = forms, family = fams, pars = pars, link=link)
 ```
 
 ```{r simulate from the surv_model}
-n <- 1e4
-set.seed(124)
+n <- 1e3
 dat <- rmsm(n, surv_model)
 datl <- surv_to_long(dat, lag=1)
 
 library(ipw)
+library(survival)
 temp <- ipwtm(
   exposure = Z,
   family = "binomial",
   link = "logit",
-  numerator = ~W,
+  numerator = ~ W,
   denominator = ~ W + X,
   id = id,
   type = "all",
@@ -300,8 +295,8 @@ temp <- ipwtm(
   data = datl,
 )
 datl$wt <- temp$ipw.weights
-# can do a cox model or survreg does parametric
-mod_correct <- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = wt, data = datl,
+# can do a cox model or survey::survreg does parametric
+mod_correct <- coxph(Surv(t, t_stop, Y) ~W + Z, weights = wt, data = datl,
                      timefix = FALSE) 
 mod_naive <- coxph(Surv(t, t_stop, Y) ~ W + Z, weights = rep(1, nrow(datl)), data = datl,
                    timefix = FALSE)
